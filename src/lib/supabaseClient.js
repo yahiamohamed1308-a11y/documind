@@ -1,7 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
 
-// These two values come from YOUR Supabase project (Settings -> API).
-// They go in a .env file — see .env.example in this project.
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
@@ -13,11 +11,6 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-/**
- * Uploads a file to Supabase Storage (bucket: "documents") and inserts
- * a matching row in the "documents" table so everyone sharing this app
- * sees it appear instantly (via realtime subscription in App.jsx).
- */
 export async function uploadDocument(file, uploadedBy) {
   const filePath = `${Date.now()}_${file.name}`
 
@@ -38,7 +31,7 @@ export async function uploadDocument(file, uploadedBy) {
       file_path: filePath,
       public_url: urlData.publicUrl,
       uploaded_by: uploadedBy,
-      extracted_text: null, // filled in later by AI OCR step
+      extracted_text: null,
       doc_type: null,
     })
     .select()
@@ -46,6 +39,20 @@ export async function uploadDocument(file, uploadedBy) {
 
   if (insertError) throw insertError
   return data
+}
+
+export async function uploadMultipleDocuments(files, uploadedBy, onProgress) {
+  const results = []
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const doc = await uploadDocument(files[i], uploadedBy)
+      results.push({ success: true, file: files[i].name, doc })
+    } catch (err) {
+      results.push({ success: false, file: files[i].name, error: err.message })
+    }
+    if (onProgress) onProgress(i + 1, files.length)
+  }
+  return results
 }
 
 export async function fetchAllDocuments() {
@@ -58,11 +65,6 @@ export async function fetchAllDocuments() {
   return data
 }
 
-/**
- * Subscribes to live changes on the documents table.
- * This is what makes uploads from your dad's device appear
- * on your screen instantly, and vice versa.
- */
 export function subscribeToDocuments(onChange) {
   const channel = supabase
     .channel('documents-realtime')
@@ -75,8 +77,6 @@ export function subscribeToDocuments(onChange) {
 
   return () => supabase.removeChannel(channel)
 }
-
-// ----- Activity feed -----
 
 export async function logActivity(actor, actionType, description) {
   const { error } = await supabase
@@ -106,8 +106,6 @@ export function subscribeToActivity(onChange) {
     .subscribe()
   return () => supabase.removeChannel(channel)
 }
-
-// ----- Presence (who's online) -----
 
 export async function pingPresence(userName) {
   const { error } = await supabase
