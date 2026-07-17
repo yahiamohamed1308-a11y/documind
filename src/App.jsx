@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import {
-  uploadDocument,
+  uploadMultipleDocuments,
   fetchAllDocuments,
   subscribeToDocuments,
   logActivity,
@@ -26,10 +26,17 @@ function timeAgo(dateStr) {
 }
 
 const SUGGESTED_CHIPS = [
-  { label: 'Expiring documents', query: 'Show me documents expiring soon' },
-  { label: 'أحدث المستندات', query: 'أحدث المستندات اللي اترفعت' },
-  { label: "This month's invoices", query: "Show me this month's invoices" },
-  { label: 'شحنات', query: 'ابعتلي كل شهادات الشحن' },
+  { label: '📅 Expiring documents', query: 'Show me documents expiring soon' },
+  { label: '🗂️ أحدث المستندات', query: 'أحدث المستندات اللي اترفعت' },
+  { label: "💰 This month's invoices", query: "Show me this month's invoices" },
+  { label: '📦 شحنات', query: 'ابعتلي كل شهادات الشحن' },
+]
+
+const TABS = [
+  { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+  { id: 'upload', label: 'Upload', icon: '📤' },
+  { id: 'library', label: 'Library', icon: '📚' },
+  { id: 'chat', label: 'AI Chat', icon: '💬' },
 ]
 
 export default function App() {
@@ -40,7 +47,9 @@ export default function App() {
   const [insight, setInsight] = useState('')
   const [messages, setMessages] = useState([])
   const [query, setQuery] = useState('')
+  const [uploadResults, setUploadResults] = useState([])
   const [uploading, setUploading] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [yourName, setYourName] = useState(
     localStorage.getItem('documind_username') || ''
@@ -99,20 +108,40 @@ export default function App() {
     }
   }
 
-  async function handleUpload(e) {
-    const file = e.target.files[0]
-    if (!file) return
+  async function handleFiles(fileList) {
+    const files = Array.from(fileList)
+    if (files.length === 0) return
     setUploading(true)
     setErrorMsg('')
-    try {
-      const doc = await uploadDocument(file, yourName || 'Unknown')
-      await logActivity(yourName || 'Unknown', 'upload', `uploaded "${doc.file_name}"`)
-    } catch (err) {
-      setErrorMsg(`Upload failed: ${err.message}`)
-    } finally {
-      setUploading(false)
-      e.target.value = ''
+    setUploadResults(files.map((f) => ({ file: f.name, status: 'pending' })))
+
+    const results = await uploadMultipleDocuments(files, yourName || 'Unknown', (done) => {
+      setUploadResults((prev) =>
+        prev.map((r, i) => (i < done ? { ...r, status: 'done' } : r))
+      )
+    })
+
+    setUploadResults(
+      results.map((r) => ({ file: r.file, status: r.success ? 'success' : 'failed', error: r.error }))
+    )
+
+    for (const r of results) {
+      if (r.success) {
+        await logActivity(yourName || 'Unknown', 'upload', `uploaded "${r.file}"`)
+      }
     }
+    setUploading(false)
+  }
+
+  function handleFileInputChange(e) {
+    handleFiles(e.target.files)
+    e.target.value = ''
+  }
+
+  function handleDrop(e) {
+    e.preventDefault()
+    setDragging(false)
+    handleFiles(e.dataTransfer.files)
   }
 
   async function runQuery(userQuery) {
@@ -174,29 +203,29 @@ export default function App() {
   return (
     <div className="app">
       <div className="header">
-        <h1>DocuMind — AI Document Library</h1>
+        <h1>DocuMind</h1>
         <p>Upload once, ask in Arabic or English, get everything compiled instantly.</p>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 8, alignItems: 'center' }}>
-          <button className="upload-btn" onClick={handleSetName}>
-            {yourName ? `👤 ${yourName}` : 'Set your name'}
+        <div className="header-controls">
+          <button className="name-btn" onClick={handleSetName}>
+            {yourName ? `👤 ${yourName}` : '👤 Set your name'}
           </button>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {onlineUsers.map((u) => (
-              <span key={u.user_name} title={`${u.user_name} online`} style={{
-                background: '#22c55e', color: '#0a0a0f', borderRadius: 12, padding: '4px 10px', fontSize: 12, fontWeight: 600
-              }}>
-                ● {u.user_name}
-              </span>
-            ))}
-          </div>
+          {onlineUsers.map((u) => (
+            <span key={u.user_name} className="presence-dot">{u.user_name}</span>
+          ))}
         </div>
       </div>
 
       <div className="tabs">
-        <button className={`tab ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>Dashboard</button>
-        <button className={`tab ${tab === 'upload' ? 'active' : ''}`} onClick={() => setTab('upload')}>Upload</button>
-        <button className={`tab ${tab === 'library' ? 'active' : ''}`} onClick={() => setTab('library')}>Library ({documents.length})</button>
-        <button className={`tab ${tab === 'chat' ? 'active' : ''}`} onClick={() => setTab('chat')}>AI Chat</button>
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            className={`tab ${tab === t.id ? 'active' : ''}`}
+            onClick={() => setTab(t.id)}
+          >
+            <span>{t.icon}</span>
+            <span>{t.label}{t.id === 'library' ? ` (${documents.length})` : ''}</span>
+          </button>
+        ))}
       </div>
 
       {errorMsg && <div className="error-msg">{errorMsg}</div>}
@@ -204,27 +233,27 @@ export default function App() {
       <div className="panel">
         {tab === 'dashboard' && (
           <div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-              <div className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
-                <strong style={{ fontSize: 24, color: healthScore > 80 ? '#22c55e' : '#f59e0b' }}>{healthScore}%</strong>
-                <span style={{ color: '#9ca3af', fontSize: 13 }}>Vault health score</span>
-                <span style={{ color: '#9ca3af', fontSize: 12 }}>
-                  {expiringSoon.length} expiring soon · {uncategorized} uncategorized
+            <div className="card-grid">
+              <div className="stat-card">
+                <span className="stat-value" style={{ color: healthScore > 80 ? 'var(--green)' : 'var(--accent-gold)' }}>
+                  {healthScore}%
                 </span>
+                <span className="stat-label">Vault Health Score</span>
+                <span className="stat-sub">{expiringSoon.length} expiring soon · {uncategorized} uncategorized</span>
               </div>
-              <div className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
-                <strong style={{ fontSize: 15 }}>💡 Smart Insight</strong>
-                <span style={{ color: '#d1d5db', fontSize: 13 }}>{insight}</span>
+              <div className="stat-card insight-card">
+                <span className="insight-title">💡 Smart Insight</span>
+                <span className="insight-text">{insight}</span>
               </div>
             </div>
 
-            <h3 style={{ fontSize: 14, color: '#9ca3af', marginBottom: 8 }}>Recent Activity</h3>
+            <p className="section-title">Recent Activity</p>
             <div className="doc-list">
-              {activity.length === 0 && <p style={{ color: '#9ca3af' }}>No activity yet.</p>}
+              {activity.length === 0 && <p className="empty-state">No activity yet — upload something to get started.</p>}
               {activity.map((a) => (
-                <div className="doc-item" key={a.id}>
-                  <span>{a.actor} {a.description}</span>
-                  <span style={{ color: '#9ca3af' }}>{timeAgo(a.created_at)}</span>
+                <div className="activity-item" key={a.id}>
+                  <span><span className="who">{a.actor}</span> {a.description}</span>
+                  <span className="when">{timeAgo(a.created_at)}</span>
                 </div>
               ))}
             </div>
@@ -233,9 +262,41 @@ export default function App() {
 
         {tab === 'upload' && (
           <div>
-            <input type="file" ref={fileInputRef} onChange={handleUpload} disabled={uploading} />
-            {uploading && <p>Uploading…</p>}
-            <p style={{ color: '#9ca3af', fontSize: 13, marginTop: 12 }}>
+            <div
+              className={`dropzone ${dragging ? 'dragging' : ''}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+            >
+              <div className="dropzone-icon">📤</div>
+              <div className="dropzone-title">Drag files here or click to browse</div>
+              <div className="dropzone-sub">Upload as many files as you want at once — PDF, images, Word docs</div>
+              <input
+                type="file"
+                ref={fileInputRef}
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleFileInputChange}
+              />
+            </div>
+
+            {uploadResults.length > 0 && (
+              <div className="upload-progress-list">
+                {uploadResults.map((r, i) => (
+                  <div className={`upload-progress-item ${r.status}`} key={i}>
+                    <span>{r.file}</span>
+                    <span>
+                      {r.status === 'pending' && '⏳ uploading…'}
+                      {r.status === 'success' && '✅ done'}
+                      {r.status === 'failed' && `❌ ${r.error}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="stat-sub" style={{ marginTop: 16 }}>
               Files are saved permanently and instantly visible to everyone sharing this app, on any device.
             </p>
           </div>
@@ -243,11 +304,11 @@ export default function App() {
 
         {tab === 'library' && (
           <div className="doc-list">
-            {documents.length === 0 && <p style={{ color: '#9ca3af' }}>No documents uploaded yet.</p>}
+            {documents.length === 0 && <p className="empty-state">No documents uploaded yet.</p>}
             {documents.map((d) => (
               <div className="doc-item" key={d.id}>
-                <span>{d.file_name}</span>
-                <span style={{ color: '#9ca3af' }}>{d.uploaded_by}</span>
+                <span className="filename">{d.file_name}</span>
+                <span className="uploader">{d.uploaded_by}</span>
               </div>
             ))}
           </div>
@@ -255,22 +316,18 @@ export default function App() {
 
         {tab === 'chat' && (
           <div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            <div className="chip-row">
               {SUGGESTED_CHIPS.map((c) => (
-                <button
-                  key={c.label}
-                  onClick={() => runQuery(c.query)}
-                  style={{
-                    background: '#26262f', color: '#d1d5db', border: '1px solid #333',
-                    borderRadius: 20, padding: '6px 14px', fontSize: 12, cursor: 'pointer'
-                  }}
-                >
+                <button key={c.label} className="chip" onClick={() => runQuery(c.query)}>
                   {c.label}
                 </button>
               ))}
             </div>
 
             <div className="chat-window">
+              {messages.length === 0 && (
+                <p className="empty-state">Ask about invoices, contracts, or any document — in Arabic or English.</p>
+              )}
               {messages.map((m, i) => (
                 <div key={i}>
                   <div className={`bubble ${m.role}`} dir={isArabic(m.text) ? 'rtl' : 'ltr'}>
@@ -292,7 +349,7 @@ export default function App() {
                 onKeyDown={(e) => e.key === 'Enter' && runQuery(query)}
                 placeholder="اسأل بالعربي أو English…"
               />
-              <button onClick={() => runQuery(query)}>Send</button>
+              <button className="btn-primary" onClick={() => runQuery(query)}>Send</button>
             </div>
           </div>
         )}
